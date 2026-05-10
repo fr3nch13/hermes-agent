@@ -5901,6 +5901,38 @@ class GatewayRunner:
                         _cmd_def = _resolve_cmd(command) if command else None
                         canonical = _cmd_def.name if _cmd_def else command
 
+        # Per-platform slash command access control. Only kicks in when the
+        # operator has set ``allow_admin_from`` for the source's scope (DM
+        # vs group). When unset → backward-compat: every allowed user can
+        # run every command. When set → non-admins can run only commands in
+        # ``user_allowed_commands`` (plus the always-allowed floor: /help,
+        # /whoami). Plain chat is unaffected — only slash commands gate.
+        if command and canonical and is_gateway_known_command(canonical):
+            from gateway.slash_access import policy_for_source as _policy_for_source
+            _policy = _policy_for_source(self.config, source)
+            if _policy.enabled and not _policy.can_run(source.user_id, canonical):
+                logger.info(
+                    "Slash command /%s denied for %s:%s (not admin, not in user_allowed_commands)",
+                    canonical,
+                    source.platform.value if source.platform else "?",
+                    source.user_id,
+                )
+                _allowed_preview = sorted(_policy.user_allowed_commands)
+                if _allowed_preview:
+                    _suffix = (
+                        "You can run: " +
+                        ", ".join(f"/{c}" for c in _allowed_preview[:12]) +
+                        ("…" if len(_allowed_preview) > 12 else "") +
+                        ". Use /whoami for the full list."
+                    )
+                else:
+                    _suffix = (
+                        "No slash commands are enabled for non-admins on this "
+                        "platform. Ask an admin to add you to allow_admin_from "
+                        "or to set user_allowed_commands."
+                    )
+                return f"⛔ /{canonical} is admin-only here. {_suffix}"
+
         # Fire the ``command:<canonical>`` hook for any recognized slash
         # command — built-in OR plugin-registered. Handlers can return a
         # dict with ``{"decision": "deny" | "handled" | "rewrite", ...}``
@@ -5983,6 +6015,9 @@ class GatewayRunner:
         
         if canonical == "profile":
             return await self._handle_profile_command(event)
+
+        if canonical == "whoami":
+            return await self._handle_whoami_command(event)
 
         if canonical == "status":
             return await self._handle_status_command(event)
@@ -7825,6 +7860,58 @@ class GatewayRunner:
         ]
 
         return "\n".join(lines)
+
+
+    async def _handle_whoami_command(self, event: MessageEvent) -> str:
+        """Handle /whoami — show the user's slash command access on this scope.
+
+        Always works (it's in the always-allowed floor of slash_access).
+        Reports: platform, scope (DM vs group), the user's tier
+        (admin / user / unrestricted), and the slash commands they can
+        actually run on this scope.
+        """
+        from gateway.slash_access import policy_for_source as _policy_for_source
+
+        source = event.source
+        policy = _policy_for_source(self.config, source)
+        platform = source.platform.value if source and source.platform else "?"
+        chat_type = (source.chat_type if source else "") or "dm"
+        scope = "DM" if chat_type.lower() in ("dm", "direct", "private", "") else "group/channel"
+        user_id = (source.user_id if source else None) or "?"
+
+        if not policy.enabled:
+            return (
+                f"**You** — {platform} ({scope})\n"
+                f"User ID: `{user_id}`\n"
+                f"Tier: unrestricted (no admin list configured for this scope)\n"
+                f"Slash commands: all available"
+            )
+
+        if policy.is_admin(user_id):
+            return (
+                f"**You** — {platform} ({scope})\n"
+                f"User ID: `{user_id}`\n"
+                f"Tier: **admin**\n"
+                f"Slash commands: all available"
+            )
+
+        # Non-admin user. Show what's actually reachable.
+        floor = ["help", "whoami"]  # mirrors slash_access._ALWAYS_ALLOWED_FOR_USERS
+        configured = sorted(policy.user_allowed_commands)
+        # Combine + dedupe, preserve order: floor first, then operator additions.
+        seen: set[str] = set()
+        runnable: list[str] = []
+        for c in floor + configured:
+            if c not in seen:
+                seen.add(c)
+                runnable.append(c)
+        runnable_str = ", ".join(f"/{c}" for c in runnable) if runnable else "(none)"
+        return (
+            f"**You** — {platform} ({scope})\n"
+            f"User ID: `{user_id}`\n"
+            f"Tier: user\n"
+            f"Slash commands you can run: {runnable_str}"
+        )
 
 
     async def _handle_kanban_command(self, event: MessageEvent) -> str:
