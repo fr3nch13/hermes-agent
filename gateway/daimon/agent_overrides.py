@@ -17,18 +17,20 @@ class AgentOverrides:
     disabled_toolsets: Optional[list[str]] = None  # ADDITIONAL disabled toolsets (merge with existing)
     gateway_timeout: Optional[int] = None  # Override gateway timeout
     ephemeral_system_prompt: Optional[str] = None  # Daimon persona prompt
-    tier: Tier = Tier.USER
+    tier: Optional[Tier] = Tier.USER  # None = user should be silently ignored
 
 
 def compute_overrides(
     raw_config: dict,
     user_id: str,
     platform: str,
+    role_ids: Optional[list[str]] = None,
 ) -> Optional[AgentOverrides]:
     """Compute tier-based overrides for agent construction.
 
-    Returns None if Daimon is not configured (no admin_users set)
+    Returns None if Daimon is not configured (no admin_users and no admin_roles set)
     or if the platform is not Discord.
+    Returns AgentOverrides with tier=None if the user should be silently ignored.
     Returns AgentOverrides with the appropriate values for the user's tier.
     """
     if platform != "discord":
@@ -36,11 +38,15 @@ def compute_overrides(
 
     cfg = load_daimon_config(raw_config)
 
-    # Daimon is only active if admin_users is configured
-    if not cfg.admin_users:
+    # Daimon is only active if at least one access control list is configured
+    if not cfg.admin_users and not cfg.admin_roles:
         return None
 
-    tier = resolve_tier(user_id, cfg)
+    tier = resolve_tier(user_id, cfg, role_ids=role_ids)
+
+    if tier is None:
+        # User should be silently ignored — return sentinel with tier=None
+        return AgentOverrides(tier=None)
 
     if tier.is_admin:
         return AgentOverrides(
