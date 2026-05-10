@@ -6671,13 +6671,7 @@ class GatewayRunner:
         
         # One-time prompt if no home channel is set for this platform
         # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
-        # Skip for Daimon sessions - users don't need gateway infrastructure prompts
-        _skip_home_notice = (
-            source.platform == Platform.LOCAL
-            or source.platform == Platform.WEBHOOK
-            or (_daimon_overrides is not None)
-        )
-        if not history and source.platform and not _skip_home_notice:
+        if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
             platform_name = source.platform.value
             env_key = _home_target_env_var(platform_name)
             if not os.getenv(env_key):
