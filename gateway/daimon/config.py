@@ -59,6 +59,10 @@ class DaimonConfig:
     """Configuration for the Daimon multi-user access control layer."""
 
     admin_users: list[str] = field(default_factory=list)
+    admin_roles: list[str] = field(default_factory=list)
+    user_users: list[str] = field(default_factory=list)
+    user_roles: list[str] = field(default_factory=list)
+    debug_force_tier: str | None = None
     user_model: str = "xiaomi/mimo-v2.5-pro"
     admin_model: str = "anthropic/claude-sonnet-4.6"
     max_iterations: int = 30
@@ -103,7 +107,11 @@ def load_daimon_config(raw_config: dict[str, Any]) -> DaimonConfig:
         return bool(val) if val is not None else default
 
     return DaimonConfig(
-        admin_users=daimon.get("admin_users") or [],
+        admin_users=[str(u) for u in (daimon.get("admin_users") or [])],
+        admin_roles=[str(r) for r in (daimon.get("admin_roles") or [])],
+        user_users=[str(u) for u in (daimon.get("user_users") or [])],
+        user_roles=[str(r) for r in (daimon.get("user_roles") or [])],
+        debug_force_tier=daimon.get("debug_force_tier") or None,
         user_model=daimon.get("user_model") or "xiaomi/mimo-v2.5-pro",
         admin_model=daimon.get("admin_model") or "anthropic/claude-sonnet-4.6",
         max_iterations=_int("max_iterations", 30),
