@@ -164,6 +164,17 @@ def increment_thread_turn(thread_id: str) -> None:
     """Increment turn counter for a thread after agent response delivery."""
     with _turn_lock:
         _turn_counts[thread_id] = _turn_counts.get(thread_id, 0) + 1
+    # Persist to DB (best-effort, non-blocking)
+    try:
+        from gateway.daimon.persistence import DaimonDB
+        from hermes_constants import get_hermes_home
+        _db_path = get_hermes_home() / "daimon.db"
+        if _db_path.exists():
+            db = DaimonDB(_db_path)
+            db.increment_turn(thread_id)
+            db.close()
+    except Exception:
+        pass
 
 
 def get_thread_turns(thread_id: str) -> int:

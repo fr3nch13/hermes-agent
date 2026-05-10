@@ -17,6 +17,7 @@ from gateway.daimon.thread_filter import ThreadOwnershipTracker
 from gateway.daimon.workspace import WorkspaceManager
 from gateway.daimon.agent_overrides import AgentOverrides, compute_overrides
 from gateway.daimon.redaction import redact_response
+from gateway.daimon.persistence import DaimonDB
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,10 @@ class DaimonSessionManager:
     Instantiated once by the Discord adapter on startup.
     """
 
-    def __init__(self, raw_config: dict) -> None:
+    def __init__(self, raw_config: dict, db_path: Optional["Path"] = None) -> None:
+        from pathlib import Path
+        from hermes_constants import get_hermes_home
+
         self._cfg = load_daimon_config(raw_config)
         self._concurrency = ConcurrencyManager(
             max_active=self._cfg.max_active_sessions,
@@ -46,9 +50,51 @@ class DaimonSessionManager:
         self._threads = ThreadOwnershipTracker()
         self._workspace = WorkspaceManager()
 
+        # Persistence — SQLite DB for thread ownership, turns, bans, daily usage
+        _db_path = db_path or (get_hermes_home() / "daimon.db")
+        self._db = DaimonDB(Path(_db_path))
+
+        # Startup recovery: load persisted state into memory
+        self._recover_from_db()
+
     @property
     def config(self) -> DaimonConfig:
         return self._cfg
+
+    @property
+    def db(self) -> DaimonDB:
+        """Expose DB for external callers (bans, turn persistence)."""
+        return self._db
+
+    def _recover_from_db(self) -> None:
+        """Load persisted state into memory on startup."""
+        try:
+            # Recover thread ownership
+            threads = self._db.get_all_threads()
+            for thread_id, creator_id in threads.items():
+                self._threads.register(thread_id, creator_id)
+
+            # Recover turn counts into gateway_hooks registry
+            from gateway.daimon.gateway_hooks import _turn_lock, _turn_counts
+            with _turn_lock:
+                for thread_id in threads:
+                    count = self._db.get_turn_count(thread_id)
+                    if count > 0:
+                        _turn_counts[thread_id] = count
+
+            # Recover daily usage into concurrency manager
+            daily = self._db.get_all_daily_usage()
+            if daily:
+                self._concurrency._daily_usage.update(daily)
+
+            # Recover bans (exposed via discord_hooks._banned set)
+            # Bans are loaded in discord_hooks after manager init
+
+            if threads:
+                logger.info("[Daimon] Recovered %d threads, %d daily records from DB",
+                           len(threads), len(daily))
+        except Exception as e:
+            logger.warning("[Daimon] DB recovery failed (non-fatal): %s", e)
 
     @property
     def is_active(self) -> bool:
@@ -101,6 +147,7 @@ class DaimonSessionManager:
 
         # Session started — register everything
         self._threads.register(thread_id, user_id)
+        self._db.register_thread(thread_id, user_id)  # persist
         self._workspace.create(thread_id)
 
         # NOTE: Tool limiter registration is handled by gateway_hooks.setup_tool_gate()
@@ -125,6 +172,7 @@ class DaimonSessionManager:
 
         # Unregister thread ownership
         self._threads.unregister(thread_id)
+        self._db.unregister_thread(thread_id)  # persist
 
         # Clean up turn counter (authoritative registry in gateway_hooks)
         from gateway.daimon.gateway_hooks import clear_thread_turns

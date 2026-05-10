@@ -41,6 +41,11 @@ class DaimonDiscordHooks:
                     else 50
                 )
                 logger.info("[Daimon] Active with %d admin(s)", len(self._manager.config.admin_users))
+                # Recover bans from DB
+                try:
+                    self._banned = self._manager.db.get_all_bans()
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning("[Daimon] Init failed: %s", e)
             self._manager = None
