@@ -67,6 +67,7 @@ class DaimonConfig:
     admin_model: str = "anthropic/claude-sonnet-4.6"
     max_iterations: int = 30
     max_threads_per_day: int = 5
+    max_turns_per_thread: int = 20
     gateway_timeout: int = 600
     max_active_sessions: int = 50
     queue_enabled: bool = True
@@ -116,6 +117,7 @@ def load_daimon_config(raw_config: dict[str, Any]) -> DaimonConfig:
         admin_model=daimon.get("admin_model") or "anthropic/claude-sonnet-4.6",
         max_iterations=_int("max_iterations", 30),
         max_threads_per_day=_int("max_threads_per_day", 5),
+        max_turns_per_thread=_int("max_turns_per_thread", 20),
         gateway_timeout=_int("gateway_timeout", 600),
         max_active_sessions=_int("max_active_sessions", 50),
         queue_enabled=_bool("queue_enabled", True),

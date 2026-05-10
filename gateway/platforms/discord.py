@@ -4102,7 +4102,14 @@ class DiscordAdapter(BasePlatformAdapter):
                 return
             if is_thread and thread_id:
                 _author_role_ids = [str(r.id) for r in message.author.roles] if hasattr(message.author, 'roles') else None
-                if not self._daimon.should_process_in_thread(str(message.author.id), thread_id, role_ids=_author_role_ids):
+                _allowed, _denial_reason = self._daimon.should_process_in_thread(str(message.author.id), thread_id, role_ids=_author_role_ids)
+                if not _allowed:
+                    if _denial_reason:
+                        try:
+                            _thread_chan = message.channel
+                            await _thread_chan.send(_denial_reason)
+                        except Exception:
+                            pass
                     return
 
         is_voice_linked_channel = False

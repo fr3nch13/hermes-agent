@@ -48,6 +48,7 @@ class DaimonSessionManager:
         )
         self._threads = ThreadOwnershipTracker()
         self._workspace = WorkspaceManager()
+        self._turn_counts: dict[str, int] = {}  # thread_id → message turns used
 
     @property
     def config(self) -> DaimonConfig:
@@ -58,9 +59,28 @@ class DaimonSessionManager:
         """Daimon is active only if admin_users or admin_roles are configured."""
         return bool(self._cfg.admin_users) or bool(self._cfg.admin_roles)
 
-    def should_process_message(self, author_id: str, thread_id: str, role_ids: Optional[list[str]] = None) -> bool:
-        """Check if a message should be processed (thread ownership filter)."""
-        return self._threads.should_process(author_id, thread_id, self._cfg, role_ids=role_ids)
+    def should_process_message(self, author_id: str, thread_id: str, role_ids: Optional[list[str]] = None) -> tuple[bool, str]:
+        """Check if a message should be processed (thread ownership + turn cap).
+
+        Returns (allowed, denial_reason). denial_reason is empty when allowed.
+        """
+        # Thread ownership / role check
+        if not self._threads.should_process(author_id, thread_id, self._cfg, role_ids=role_ids):
+            return False, ""
+
+        # Turn cap check (only for non-admin users)
+        from gateway.daimon.tier import resolve_tier
+        tier = resolve_tier(author_id, self._cfg, role_ids=role_ids)
+        if tier is not None and not tier.is_admin and self._cfg.max_turns_per_thread > 0:
+            count = self._turn_counts.get(thread_id, 0)
+            if count >= self._cfg.max_turns_per_thread:
+                return False, (
+                    f"⏳ This thread has used all {self._cfg.max_turns_per_thread} message turns. "
+                    f"Start a new thread to continue."
+                )
+            self._turn_counts[thread_id] = count + 1
+
+        return True, ""
 
     def start_session(
         self, thread_id: str, user_id: str, raw_config: dict
@@ -107,6 +127,9 @@ class DaimonSessionManager:
 
         # Unregister thread ownership
         self._threads.unregister(thread_id)
+
+        # Clean up turn counter
+        self._turn_counts.pop(thread_id, None)
 
         # Release concurrency slot (may promote next from queue)
         return self._concurrency.release(thread_id)

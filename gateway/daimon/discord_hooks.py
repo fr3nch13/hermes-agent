@@ -50,16 +50,16 @@ class DaimonDiscordHooks:
         """Check if a user is banned."""
         return user_id in self._banned
 
-    def should_process_in_thread(self, author_id: str, thread_id: str, role_ids: Optional[list[str]] = None) -> bool:
-        """Check if a message should be processed (thread ownership filter).
+    def should_process_in_thread(self, author_id: str, thread_id: str, role_ids: Optional[list[str]] = None) -> tuple[bool, str]:
+        """Check if a message should be processed (thread ownership + turn cap).
 
-        Returns True if:
-        - Daimon is not active (pass-through)
-        - Author is the thread creator or an admin
-        - Thread is not tracked by Daimon (pre-existing thread)
+        Returns (allowed, denial_reason):
+        - (True, "") — process the message
+        - (False, "") — silent ignore (ownership/role)
+        - (False, "reason") — deny with message (turn cap hit)
         """
         if not self._manager:
-            return True
+            return True, ""
         return self._manager.should_process_message(author_id, thread_id, role_ids=role_ids)
 
     def on_thread_created(
